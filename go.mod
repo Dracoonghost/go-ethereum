@@ -1,4 +1,4 @@
-module github.com/dracoonghost/go-ethereum
+module github.com/Dracoonghost/go-ethereum
 
 go 1.15
 
