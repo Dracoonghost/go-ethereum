@@ -97,40 +97,37 @@ func TestGethClient(t *testing.T) {
 	defer backend.Close()
 	defer client.Close()
 
-	tests := []struct {
-		name string
+	tests := map[string]struct {
 		test func(t *testing.T)
 	}{
-		{
-			"TestAccessList",
+		"TestAccessList": {
 			func(t *testing.T) { testAccessList(t, client) },
 		},
-		{
-			"TestGetProof",
+		"TestGetProof": {
 			func(t *testing.T) { testGetProof(t, client) },
-		}, {
-			"TestGCStats",
+		},
+		"TestGCStats": {
 			func(t *testing.T) { testGCStats(t, client) },
-		}, {
-			"TestMemStats",
+		},
+		"TestMemStats": {
 			func(t *testing.T) { testMemStats(t, client) },
-		}, {
-			"TestGetNodeInfo",
+		},
+		"TestGetNodeInfo": {
 			func(t *testing.T) { testGetNodeInfo(t, client) },
-		}, {
-			"TestSetHead",
+		},
+		"TestSetHead": {
 			func(t *testing.T) { testSetHead(t, client) },
-		}, {
-			"TestSubscribePendingTxs",
+		},
+		"TestSubscribePendingTxs": {
 			func(t *testing.T) { testSubscribePendingTransactions(t, client) },
-		}, {
-			"TestCallContract",
+		},
+		"TestCallContract": {
 			func(t *testing.T) { testCallContract(t, client) },
 		},
 	}
 	t.Parallel()
-	for _, tt := range tests {
-		t.Run(tt.name, tt.test)
+	for name, tt := range tests {
+		t.Run(name, tt.test)
 	}
 }
 

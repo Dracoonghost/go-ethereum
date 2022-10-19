@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build none
 // +build none
 
 /*
@@ -33,6 +32,7 @@ Available commands are:
    nsis                                                                                        -- creates a Windows NSIS installer
    aar        [ -local ] [ -sign key-id ] [-deploy repo] [ -upload dest ]                      -- creates an Android archive
    xcode      [ -local ] [ -sign key-id ] [-deploy repo] [ -upload dest ]                      -- creates an iOS XCode framework
+   xgo        [ -alltools ] [ options ]                                                        -- cross builds according to options
    purge      [ -store blobstore ] [ -days threshold ]                                         -- purges old archives from the blobstore
 
 For all commands, -n prevents execution of external programs (dry run mode).
@@ -59,6 +59,7 @@ import (
 	"time"
 
 	"github.com/cespare/cp"
+
 	"github.com/ethereum/go-ethereum/crypto/signify"
 	"github.com/ethereum/go-ethereum/internal/build"
 	"github.com/ethereum/go-ethereum/params"
@@ -118,7 +119,7 @@ var (
 	// A debian package is created for all executables listed here.
 	debEthereum = debPackage{
 		Name:        "ethereum",
-		Version:     params.Version,
+		Version:     params.Version(),
 		Executables: debExecutables,
 	}
 
@@ -129,15 +130,20 @@ var (
 
 	// Distros for which packages are created.
 	// Note: vivid is unsupported because there is no golang-1.6 package for it.
-	// Note: the following Ubuntu releases have been officially deprecated on Launchpad:
-	//   wily, yakkety, zesty, artful, cosmic, disco, eoan, groovy, hirsuite
+	// Note: wily is unsupported because it was officially deprecated on Launchpad.
+	// Note: yakkety is unsupported because it was officially deprecated on Launchpad.
+	// Note: zesty is unsupported because it was officially deprecated on Launchpad.
+	// Note: artful is unsupported because it was officially deprecated on Launchpad.
+	// Note: cosmic is unsupported because it was officially deprecated on Launchpad.
+	// Note: disco is unsupported because it was officially deprecated on Launchpad.
+	// Note: eoan is unsupported because it was officially deprecated on Launchpad.
 	debDistroGoBoots = map[string]string{
-		"trusty": "golang-1.11", // EOL: 04/2024
-		"xenial": "golang-go",   // EOL: 04/2026
-		"bionic": "golang-go",   // EOL: 04/2028
-		"focal":  "golang-go",   // EOL: 04/2030
-		"impish": "golang-go",   // EOL: 07/2022
-		// "jammy": "golang-go",   // EOL: 04/2027
+		"trusty":  "golang-1.11",
+		"xenial":  "golang-go",
+		"bionic":  "golang-go",
+		"focal":   "golang-go",
+		"groovy":  "golang-go",
+		"hirsute": "golang-go",
 	}
 
 	debGoBootPaths = map[string]string{
@@ -148,7 +154,7 @@ var (
 	// This is the version of go that will be downloaded by
 	//
 	//     go run ci.go install -dlgo
-	dlgoVersion = "1.17.5"
+	dlgoVersion = "1.16.4"
 )
 
 var GOBIN, _ = filepath.Abs(filepath.Join("build", "bin"))
@@ -188,6 +194,8 @@ func main() {
 		doAndroidArchive(os.Args[2:])
 	case "xcode":
 		doXCodeFramework(os.Args[2:])
+	case "xgo":
+		doXgo(os.Args[2:])
 	case "purge":
 		doPurge(os.Args[2:])
 	default:
@@ -258,11 +266,6 @@ func buildFlags(env build.Environment) (flags []string) {
 	if runtime.GOOS == "darwin" {
 		ld = append(ld, "-s")
 	}
-	// Enforce the stacksize to 8M, which is the case on most platforms apart from
-	// alpine Linux.
-	if runtime.GOOS == "linux" {
-		ld = append(ld, "-extldflags", "-Wl,-z,stack-size=0x800000")
-	}
 	if len(ld) > 0 {
 		flags = append(flags, "-ldflags", strings.Join(ld, " "))
 	}
@@ -280,7 +283,6 @@ func doTest(cmdline []string) {
 		cc       = flag.String("cc", "", "Sets C compiler binary")
 		coverage = flag.Bool("coverage", false, "Whether to record code coverage")
 		verbose  = flag.Bool("v", false, "Whether to log verbosely")
-		race     = flag.Bool("race", false, "Execute the race detector")
 	)
 	flag.CommandLine.Parse(cmdline)
 
@@ -300,9 +302,6 @@ func doTest(cmdline []string) {
 	}
 	if *verbose {
 		gotest.Args = append(gotest.Args, "-v")
-	}
-	if *race {
-		gotest.Args = append(gotest.Args, "-race")
 	}
 
 	packages := []string{"./..."}
@@ -332,14 +331,10 @@ func doLint(cmdline []string) {
 
 // downloadLinter downloads and unpacks golangci-lint.
 func downloadLinter(cachedir string) string {
-	const version = "1.42.0"
+	const version = "1.39.0"
 
 	csdb := build.MustLoadChecksums("build/checksums.txt")
-	arch := runtime.GOARCH
-	if arch == "arm" {
-		arch += "v" + os.Getenv("GOARM")
-	}
-	base := fmt.Sprintf("golangci-lint-%s-%s-%s", version, runtime.GOOS, arch)
+	base := fmt.Sprintf("golangci-lint-%s-%s-%s", version, runtime.GOOS, runtime.GOARCH)
 	url := fmt.Sprintf("https://github.com/golangci/golangci-lint/releases/download/v%s/%s.tar.gz", version, base)
 	archivePath := filepath.Join(cachedir, base+".tar.gz")
 	if err := csdb.DownloadFile(url, archivePath); err != nil {
@@ -498,12 +493,12 @@ func doDocker(cmdline []string) {
 	case env.Branch == "master":
 		tags = []string{"latest"}
 	case strings.HasPrefix(env.Tag, "v1."):
-		tags = []string{"stable", fmt.Sprintf("release-1.%d", params.VersionMinor), "v" + params.Version}
+		tags = []string{"stable", fmt.Sprintf("release-1.%d", params.VersionMinor), "v" + params.Version()}
 	}
 	// If architecture specific image builds are requested, build and push them
 	if *image {
-		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+params.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:TAG", *upload), ".")
-		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+params.VersionWithMeta, "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:alltools-TAG", *upload), "-f", "Dockerfile.alltools", ".")
+		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+params.VersionWithMeta(), "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:TAG", *upload), ".")
+		build.MustRunCommand("docker", "build", "--build-arg", "COMMIT="+env.Commit, "--build-arg", "VERSION="+params.VersionWithMeta(), "--build-arg", "BUILDNUM="+env.Buildnum, "--tag", fmt.Sprintf("%s:alltools-TAG", *upload), "-f", "Dockerfile.alltools", ".")
 
 		// Tag and upload the images to Docker Hub
 		for _, tag := range tags {
@@ -958,7 +953,7 @@ func doWindowsInstaller(cmdline []string) {
 	// Build the installer. This assumes that all the needed files have been previously
 	// built (don't mix building and packaging to keep cross compilation complexity to a
 	// minimum).
-	version := strings.Split(params.Version, ".")
+	version := strings.Split(params.Version(), ".")
 	if env.Commit != "" {
 		version[2] += "-" + env.Commit[:8]
 	}
@@ -1101,7 +1096,7 @@ func newMavenMetadata(env build.Environment) mavenMetadata {
 		}
 	}
 	// Render the version and package strings
-	version := params.Version
+	version := params.Version()
 	if isUnstableBuild(env) {
 		version += "-SNAPSHOT"
 	}
@@ -1199,7 +1194,7 @@ func newPodMetadata(env build.Environment, archive string) podMetadata {
 			}
 		}
 	}
-	version := params.Version
+	version := params.Version()
 	if isUnstableBuild(env) {
 		version += "-unstable." + env.Buildnum
 	}
@@ -1209,6 +1204,48 @@ func newPodMetadata(env build.Environment, archive string) podMetadata {
 		Commit:       env.Commit,
 		Contributors: contribs,
 	}
+}
+
+// Cross compilation
+
+func doXgo(cmdline []string) {
+	var (
+		alltools = flag.Bool("alltools", false, `Flag whether we're building all known tools, or only on in particular`)
+	)
+	flag.CommandLine.Parse(cmdline)
+	env := build.Env()
+	var tc build.GoToolchain
+
+	// Make sure xgo is available for cross compilation
+	build.MustRun(tc.Install(GOBIN, "github.com/karalabe/xgo@latest"))
+
+	// If all tools building is requested, build everything the builder wants
+	args := append(buildFlags(env), flag.Args()...)
+
+	if *alltools {
+		args = append(args, []string{"--dest", GOBIN}...)
+		for _, res := range allToolsArchiveFiles {
+			if strings.HasPrefix(res, GOBIN) {
+				// Binary tool found, cross build it explicitly
+				args = append(args, "./"+filepath.Join("cmd", filepath.Base(res)))
+				build.MustRun(xgoTool(args))
+				args = args[:len(args)-1]
+			}
+		}
+		return
+	}
+
+	// Otherwise execute the explicit cross compilation
+	path := args[len(args)-1]
+	args = append(args[:len(args)-1], []string{"--dest", GOBIN, path}...)
+	build.MustRun(xgoTool(args))
+}
+
+func xgoTool(args []string) *exec.Cmd {
+	cmd := exec.Command(filepath.Join(GOBIN, "xgo"), args...)
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, []string{"GOBIN=" + GOBIN}...)
+	return cmd
 }
 
 // Binary distribution cleanups
@@ -1238,21 +1275,21 @@ func doPurge(cmdline []string) {
 
 	// Iterate over the blobs, collect and sort all unstable builds
 	for i := 0; i < len(blobs); i++ {
-		if !strings.Contains(*blobs[i].Name, "unstable") {
+		if !strings.Contains(blobs[i].Name, "unstable") {
 			blobs = append(blobs[:i], blobs[i+1:]...)
 			i--
 		}
 	}
 	for i := 0; i < len(blobs); i++ {
 		for j := i + 1; j < len(blobs); j++ {
-			if blobs[i].Properties.LastModified.After(*blobs[j].Properties.LastModified) {
+			if blobs[i].Properties.LastModified.After(blobs[j].Properties.LastModified) {
 				blobs[i], blobs[j] = blobs[j], blobs[i]
 			}
 		}
 	}
 	// Filter out all archives more recent that the given threshold
 	for i, blob := range blobs {
-		if time.Since(*blob.Properties.LastModified) < time.Duration(*limit)*24*time.Hour {
+		if time.Since(blob.Properties.LastModified) < time.Duration(*limit)*24*time.Hour {
 			blobs = blobs[:i]
 			break
 		}

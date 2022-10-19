@@ -99,28 +99,29 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, pending bool) *testBacke
 	var (
 		key, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr   = crypto.PubkeyToAddress(key.PublicKey)
-		config = *params.TestChainConfig // needs copy because it is modified below
 		gspec  = &core.Genesis{
-			Config: &config,
+			Config: params.TestChainConfig,
 			Alloc:  core.GenesisAlloc{addr: {Balance: big.NewInt(math.MaxInt64)}},
 		}
 		signer = types.LatestSigner(gspec.Config)
 	)
-	config.LondonBlock = londonBlock
-	config.ArrowGlacierBlock = londonBlock
+	if londonBlock != nil {
+		gspec.Config.LondonBlock = londonBlock
+		signer = types.LatestSigner(gspec.Config)
+	} else {
+		gspec.Config.LondonBlock = nil
+	}
 	engine := ethash.NewFaker()
 	db := rawdb.NewMemoryDatabase()
-	genesis, err := gspec.Commit(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	genesis, _ := gspec.Commit(db)
+
 	// Generate testing blocks
 	blocks, _ := core.GenerateChain(gspec.Config, genesis, engine, db, testHead+1, func(i int, b *core.BlockGen) {
 		b.SetCoinbase(common.Address{1})
 
-		var txdata types.TxData
+		var tx *types.Transaction
 		if londonBlock != nil && b.Number().Cmp(londonBlock) >= 0 {
-			txdata = &types.DynamicFeeTx{
+			txdata := &types.DynamicFeeTx{
 				ChainID:   gspec.Config.ChainID,
 				Nonce:     b.TxNonce(addr),
 				To:        &common.Address{},
@@ -129,8 +130,9 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, pending bool) *testBacke
 				GasTipCap: big.NewInt(int64(i+1) * params.GWei),
 				Data:      []byte{},
 			}
+			tx = types.NewTx(txdata)
 		} else {
-			txdata = &types.LegacyTx{
+			txdata := &types.LegacyTx{
 				Nonce:    b.TxNonce(addr),
 				To:       &common.Address{},
 				Gas:      21000,
@@ -138,13 +140,18 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, pending bool) *testBacke
 				Value:    big.NewInt(100),
 				Data:     []byte{},
 			}
+			tx = types.NewTx(txdata)
 		}
-		b.AddTx(types.MustSignNewTx(key, signer, txdata))
+		tx, err := types.SignTx(tx, signer, key)
+		if err != nil {
+			t.Fatalf("failed to create tx: %v", err)
+		}
+		b.AddTx(tx)
 	})
 	// Construct testing chain
 	diskdb := rawdb.NewMemoryDatabase()
 	gspec.Commit(diskdb)
-	chain, err := core.NewBlockChain(diskdb, &core.CacheConfig{TrieCleanNoPrefetch: true}, gspec.Config, engine, vm.Config{}, nil, nil)
+	chain, err := core.NewBlockChain(diskdb, nil, gspec.Config, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create local chain, %v", err)
 	}

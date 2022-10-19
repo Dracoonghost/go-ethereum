@@ -553,6 +553,17 @@ func (srv *Server) setupDiscovery() error {
 	if err != nil {
 		return err
 	}
+
+	listeners, err := netutil.UdpPortListeners(addr.Port)
+	if err != nil {
+		return err
+	}
+	if len(listeners) > 0 {
+		err = errAlreadyListened
+		srv.log.Error("UDP port", "addr", addr, "err", err, "listeners", listeners)
+		return err
+	}
+
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return err
@@ -943,8 +954,9 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	}
 
 	// If dialing, figure out the remote public key.
+	var dialPubkey *ecdsa.PublicKey
 	if dialDest != nil {
-		dialPubkey := new(ecdsa.PublicKey)
+		dialPubkey = new(ecdsa.PublicKey)
 		if err := dialDest.Load((*enode.Secp256k1)(dialPubkey)); err != nil {
 			err = errors.New("dial destination doesn't have a secp256k1 public key")
 			srv.log.Trace("Setting up connection failed", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)

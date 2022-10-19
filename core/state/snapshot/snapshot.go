@@ -163,9 +163,6 @@ type Tree struct {
 	cache  int                      // Megabytes permitted to use for read caches
 	layers map[common.Hash]snapshot // Collection of all known layers
 	lock   sync.RWMutex
-
-	// Test hooks
-	onFlatten func() // Hook invoked when the bottom most diff layers are flattened
 }
 
 // New attempts to load an already existing snapshot from a persistent key-value
@@ -202,7 +199,7 @@ func New(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root comm
 	}
 	if err != nil {
 		if rebuild {
-			log.Warn("Failed to load snapshot, regenerating", "err", err)
+			log.Debug("Failed to load snapshot, regenerating", "err", err)
 			snap.Rebuild(root)
 			return snap, nil
 		}
@@ -466,21 +463,14 @@ func (t *Tree) cap(diff *diffLayer, layers int) *diskLayer {
 		return nil
 
 	case *diffLayer:
-		// Hold the write lock until the flattened parent is linked correctly.
-		// Otherwise, the stale layer may be accessed by external reads in the
-		// meantime.
-		diff.lock.Lock()
-		defer diff.lock.Unlock()
-
 		// Flatten the parent into the grandparent. The flattening internally obtains a
 		// write lock on grandparent.
 		flattened := parent.flatten().(*diffLayer)
 		t.layers[flattened.root] = flattened
 
-		// Invoke the hook if it's registered. Ugly hack.
-		if t.onFlatten != nil {
-			t.onFlatten()
-		}
+		diff.lock.Lock()
+		defer diff.lock.Unlock()
+
 		diff.parent = flattened
 		if flattened.memory < aggregatorMemoryLimit {
 			// Accumulator layer is smaller than the limit, so we can abort, unless
@@ -834,6 +824,10 @@ func (t *Tree) generating() (bool, error) {
 	layer.lock.RLock()
 	defer layer.lock.RUnlock()
 	return layer.genMarker != nil, nil
+}
+
+func (t *Tree) Generating() (bool, error) {
+	return t.generating()
 }
 
 // diskRoot is a external helper function to return the disk layer root.

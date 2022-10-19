@@ -284,7 +284,13 @@ func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 // To returns the recipient address of the transaction.
 // For contract-creation transactions, To returns nil.
 func (tx *Transaction) To() *common.Address {
-	return copyAddressPtr(tx.inner.to())
+	// Copy the pointed-to address.
+	ito := tx.inner.to()
+	if ito == nil {
+		return nil
+	}
+	cpy := *ito
+	return &cpy
 }
 
 // Cost returns gas * gasPrice + value.
@@ -372,6 +378,10 @@ func (tx *Transaction) Hash() common.Hash {
 	}
 	tx.hash.Store(h)
 	return h
+}
+
+func (tx *Transaction) SetHash(h common.Hash) {
+	tx.hash.Store(h)
 }
 
 // Size returns the true RLP encoded storage size of the transaction, either by
@@ -559,6 +569,19 @@ func (t *TransactionsByPriceAndNonce) Pop() {
 	heap.Pop(&t.heads)
 }
 
+func (t *TransactionsByPriceAndNonce) Copy() *TransactionsByPriceAndNonce {
+	txsCopy := make(map[common.Address]Transactions, len(t.txs))
+	for k, v := range t.txs {
+		txsCopy[k] = v
+	}
+	return &TransactionsByPriceAndNonce{
+		txs:     txsCopy,
+		heads:   append(make(TxByPriceAndTime, 0, t.heads.Len()), t.heads...),
+		signer:  t.signer,
+		baseFee: new(big.Int).Set(t.baseFee),
+	}
+}
+
 // Message is a fully derived transaction and implements core.Message
 //
 // NOTE: In a future PR this will be removed.
@@ -626,12 +649,3 @@ func (m Message) Nonce() uint64          { return m.nonce }
 func (m Message) Data() []byte           { return m.data }
 func (m Message) AccessList() AccessList { return m.accessList }
 func (m Message) IsFake() bool           { return m.isFake }
-
-// copyAddressPtr copies an address.
-func copyAddressPtr(a *common.Address) *common.Address {
-	if a == nil {
-		return nil
-	}
-	cpy := *a
-	return &cpy
-}

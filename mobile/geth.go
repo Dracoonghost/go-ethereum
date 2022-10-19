@@ -131,7 +131,7 @@ func NewNode(datadir string, config *NodeConfig) (stack *Node, _ error) {
 	// Create the empty networking stack
 	nodeConf := &node.Config{
 		Name:        clientIdentifier,
-		Version:     params.VersionWithMeta,
+		Version:     params.VersionWithMeta(),
 		DataDir:     datadir,
 		KeyStoreDir: filepath.Join(datadir, "keystore"), // Mobile should never use internal keystores!
 		P2P: p2p.Config{
@@ -163,13 +163,6 @@ func NewNode(datadir string, config *NodeConfig) (stack *Node, _ error) {
 			genesis.Config = params.RopstenChainConfig
 			if config.EthereumNetworkID == 1 {
 				config.EthereumNetworkID = 3
-			}
-		}
-		// If we have the Sepolia testnet, hard code the chain configs too
-		if config.EthereumGenesis == SepoliaGenesis() {
-			genesis.Config = params.SepoliaChainConfig
-			if config.EthereumNetworkID == 1 {
-				config.EthereumNetworkID = 11155111
 			}
 		}
 		// If we have the Rinkeby testnet, hard code the chain configs too

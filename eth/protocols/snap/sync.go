@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -126,8 +125,8 @@ type accountRequest struct {
 type accountResponse struct {
 	task *accountTask // Task which this request is filling
 
-	hashes   []common.Hash         // Account hashes in the returned range
-	accounts []*types.StateAccount // Expanded accounts in the returned range
+	hashes   []common.Hash    // Account hashes in the returned range
+	accounts []*state.Account // Expanded accounts in the returned range
 
 	cont bool // Whether the account range has a continuation
 }
@@ -325,10 +324,10 @@ type healTask struct {
 	codeTasks map[common.Hash]struct{}      // Set of byte code tasks currently queued for retrieval
 }
 
-// SyncProgress is a database entry to allow suspending and resuming a snapshot state
+// syncProgress is a database entry to allow suspending and resuming a snapshot state
 // sync. Opposed to full and fast sync, there is no way to restart a suspended
 // snap sync without prior knowledge of the suspension point.
-type SyncProgress struct {
+type syncProgress struct {
 	Tasks []*accountTask // The suspended account tasks (contract tasks within)
 
 	// Status report during syncing phase
@@ -342,15 +341,12 @@ type SyncProgress struct {
 	// Status report during healing phase
 	TrienodeHealSynced uint64             // Number of state trie nodes downloaded
 	TrienodeHealBytes  common.StorageSize // Number of state trie bytes persisted to disk
+	TrienodeHealDups   uint64             // Number of state trie nodes already processed
+	TrienodeHealNops   uint64             // Number of state trie nodes not requested
 	BytecodeHealSynced uint64             // Number of bytecodes downloaded
 	BytecodeHealBytes  common.StorageSize // Number of bytecodes persisted to disk
-}
-
-// SyncPending is analogous to SyncProgress, but it's used to report on pending
-// ephemeral sync progress that doesn't get persisted into the database.
-type SyncPending struct {
-	TrienodeHeal uint64 // Number of state trie nodes pending
-	BytecodeHeal uint64 // Number of bytecodes pending
+	BytecodeHealDups   uint64             // Number of bytecodes already processed
+	BytecodeHealNops   uint64             // Number of bytecodes not requested
 }
 
 // SyncPeer abstracts out the methods required for a peer to be synced against
@@ -546,7 +542,7 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 	s.lock.Lock()
 	s.root = root
 	s.healer = &healTask{
-		scheduler: state.NewStateSync(root, s.db, s.onHealState),
+		scheduler: state.NewStateSync(root, s.db, nil, s.onHealState),
 		trieTasks: make(map[common.Hash]trie.SyncPath),
 		codeTasks: make(map[common.Hash]struct{}),
 	}
@@ -674,7 +670,7 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 // loadSyncStatus retrieves a previously aborted sync status from the database,
 // or generates a fresh one if none is available.
 func (s *Syncer) loadSyncStatus() {
-	var progress SyncProgress
+	var progress syncProgress
 
 	if status := rawdb.ReadSnapshotSyncStatus(s.db); status != nil {
 		if err := json.Unmarshal(status, &progress); err != nil {
@@ -778,7 +774,7 @@ func (s *Syncer) saveSyncStatus() {
 		}
 	}
 	// Store the actual progress markers
-	progress := &SyncProgress{
+	progress := &syncProgress{
 		Tasks:              s.tasks,
 		AccountSynced:      s.accountSynced,
 		AccountBytes:       s.accountBytes,
@@ -796,31 +792,6 @@ func (s *Syncer) saveSyncStatus() {
 		panic(err) // This can only fail during implementation
 	}
 	rawdb.WriteSnapshotSyncStatus(s.db, status)
-}
-
-// Progress returns the snap sync status statistics.
-func (s *Syncer) Progress() (*SyncProgress, *SyncPending) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	progress := &SyncProgress{
-		AccountSynced:      s.accountSynced,
-		AccountBytes:       s.accountBytes,
-		BytecodeSynced:     s.bytecodeSynced,
-		BytecodeBytes:      s.bytecodeBytes,
-		StorageSynced:      s.storageSynced,
-		StorageBytes:       s.storageBytes,
-		TrienodeHealSynced: s.trienodeHealSynced,
-		TrienodeHealBytes:  s.trienodeHealBytes,
-		BytecodeHealSynced: s.bytecodeHealSynced,
-		BytecodeHealBytes:  s.bytecodeHealBytes,
-	}
-	pending := new(SyncPending)
-	if s.healer != nil {
-		pending.TrienodeHeal = uint64(len(s.healer.trieTasks))
-		pending.BytecodeHeal = uint64(len(s.healer.codeTasks))
-	}
-	return progress, pending
 }
 
 // cleanAccountTasks removes account range retrieval tasks that have already been
@@ -1781,7 +1752,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 	for i, account := range res.accounts {
 		// Check if the account is a contract with an unknown code
 		if !bytes.Equal(account.CodeHash, emptyCode[:]) {
-			if !rawdb.HasCodeWithPrefix(s.db, common.BytesToHash(account.CodeHash)) {
+			if code := rawdb.ReadCodeWithPrefix(s.db, common.BytesToHash(account.CodeHash)); code == nil {
 				res.task.codeTasks[common.BytesToHash(account.CodeHash)] = struct{}{}
 				res.task.needCode[i] = true
 				res.task.pend++
@@ -1789,7 +1760,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 		}
 		// Check if the account is a contract with an unknown storage trie
 		if account.Root != emptyRoot {
-			if ok, err := s.db.Has(account.Root[:]); err != nil || !ok {
+			if node, err := s.db.Get(account.Root[:]); err != nil || node == nil {
 				// If there was a previous large state retrieval in progress,
 				// don't restart it from scratch. This happens if a sync cycle
 				// is interrupted and resumed later. However, *do* update the
@@ -2303,9 +2274,9 @@ func (s *Syncer) OnAccounts(peer SyncPeer, id uint64, hashes []common.Hash, acco
 		s.scheduleRevertAccountRequest(req)
 		return err
 	}
-	accs := make([]*types.StateAccount, len(accounts))
+	accs := make([]*state.Account, len(accounts))
 	for i, account := range accounts {
-		acc := new(types.StateAccount)
+		acc := new(state.Account)
 		if err := rlp.DecodeBytes(account, acc); err != nil {
 			panic(err) // We created these blobs, we must be able to decode them
 		}
@@ -2769,7 +2740,7 @@ func (s *Syncer) onHealByteCodes(peer SyncPeer, id uint64, bytecodes [][]byte) e
 // Note it's not concurrent safe, please handle the concurrent issue outside.
 func (s *Syncer) onHealState(paths [][]byte, value []byte) error {
 	if len(paths) == 1 {
-		var account types.StateAccount
+		var account state.Account
 		if err := rlp.DecodeBytes(value, &account); err != nil {
 			return nil
 		}

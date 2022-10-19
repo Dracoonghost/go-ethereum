@@ -33,7 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/mclock"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/contracts/checkpointoracle/contract"
 	"github.com/ethereum/go-ethereum/core"
@@ -240,7 +239,6 @@ func newTestClientHandler(backend *backends.SimulatedBackend, odr *LesOdr, index
 		engine:     engine,
 		blockchain: chain,
 		eventMux:   evmux,
-		merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 	}
 	client.handler = newClientHandler(ulcServers, ulcFraction, nil, client)
 
@@ -356,7 +354,7 @@ func (p *testPeer) handshakeWithServer(t *testing.T, td *big.Int, head common.Ha
 	if err := p2p.ExpectMsg(p.app, StatusMsg, nil); err != nil {
 		t.Fatalf("status recv: %v", err)
 	}
-	if err := p2p.Send(p.app, StatusMsg, &sendList); err != nil {
+	if err := p2p.Send(p.app, StatusMsg, sendList); err != nil {
 		t.Fatalf("status send: %v", err)
 	}
 }
@@ -389,7 +387,7 @@ func (p *testPeer) handshakeWithClient(t *testing.T, td *big.Int, head common.Ha
 	if err := p2p.ExpectMsg(p.app, StatusMsg, nil); err != nil {
 		t.Fatalf("status recv: %v", err)
 	}
-	if err := p2p.Send(p.app, StatusMsg, &sendList); err != nil {
+	if err := p2p.Send(p.app, StatusMsg, sendList); err != nil {
 		t.Fatalf("status send: %v", err)
 	}
 }
@@ -400,7 +398,7 @@ func (p *testPeer) close() {
 	p.app.Close()
 }
 
-func newTestPeerPair(name string, version int, server *serverHandler, client *clientHandler, noInitAnnounce bool) (*testPeer, *testPeer, error) {
+func newTestPeerPair(name string, version int, server *serverHandler, client *clientHandler) (*testPeer, *testPeer, error) {
 	// Create a message pipe to communicate through
 	app, net := p2p.MsgPipe()
 
@@ -425,16 +423,16 @@ func newTestPeerPair(name string, version int, server *serverHandler, client *cl
 		select {
 		case <-client.closeCh:
 			errc2 <- p2p.DiscQuitting
-		case errc2 <- client.handle(peer2, noInitAnnounce):
+		case errc2 <- client.handle(peer2):
 		}
 	}()
 	// Ensure the connection is established or exits when any error occurs
 	for {
 		select {
 		case err := <-errc1:
-			return nil, nil, fmt.Errorf("failed to establish protocol connection %v", err)
+			return nil, nil, fmt.Errorf("Failed to establish protocol connection %v", err)
 		case err := <-errc2:
-			return nil, nil, fmt.Errorf("failed to establish protocol connection %v", err)
+			return nil, nil, fmt.Errorf("Failed to establish protocol connection %v", err)
 		default:
 		}
 		if atomic.LoadUint32(&peer1.serving) == 1 && atomic.LoadUint32(&peer2.serving) == 1 {
@@ -475,7 +473,7 @@ func (client *testClient) newRawPeer(t *testing.T, name string, version int, rec
 		select {
 		case <-client.handler.closeCh:
 			errCh <- p2p.DiscQuitting
-		case errCh <- client.handler.handle(peer, false):
+		case errCh <- client.handler.handle(peer):
 		}
 	}()
 	tp := &testPeer{
@@ -625,7 +623,7 @@ func newClientServerEnv(t *testing.T, config testnetConfig) (*testServer, *testC
 	if config.connect {
 		done := make(chan struct{})
 		client.syncEnd = func(_ *types.Header) { close(done) }
-		cpeer, speer, err = newTestPeerPair("peer", config.protocol, server, client, false)
+		cpeer, speer, err = newTestPeerPair("peer", config.protocol, server, client)
 		if err != nil {
 			t.Fatalf("Failed to connect testing peers %v", err)
 		}

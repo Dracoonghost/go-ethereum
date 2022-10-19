@@ -45,7 +45,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.GoerliFlag,
 			utils.RinkebyFlag,
 			utils.RopstenFlag,
-			utils.SepoliaFlag,
 			utils.SyncModeFlag,
 			utils.ExitWhenSyncedFlag,
 			utils.GCModeFlag,
@@ -75,7 +74,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		Flags: []cli.Flag{
 			utils.DeveloperFlag,
 			utils.DeveloperPeriodFlag,
-			utils.DeveloperGasLimitFlag,
 		},
 	},
 	{
@@ -135,7 +133,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		Flags: []cli.Flag{
 			utils.IPCDisabledFlag,
 			utils.IPCPathFlag,
-			utils.JWTSecretFlag,
 			utils.HTTPEnabledFlag,
 			utils.HTTPListenAddrFlag,
 			utils.HTTPPortFlag,
@@ -153,7 +150,6 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.GraphQLCORSDomainFlag,
 			utils.GraphQLVirtualHostsFlag,
 			utils.RPCGlobalGasCapFlag,
-			utils.RPCGlobalEVMTimeoutFlag,
 			utils.RPCGlobalTxFeeCapFlag,
 			utils.AllowUnprotectedTxs,
 			utils.JSpathFlag,
@@ -189,7 +185,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.MinerEtherbaseFlag,
 			utils.MinerExtraDataFlag,
 			utils.MinerRecommitIntervalFlag,
-			utils.MinerNoVerifyFlag,
+			utils.MinerNoVerfiyFlag,
 		},
 	},
 	{
@@ -222,6 +218,13 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		Name: "ALIASED (deprecated)",
 		Flags: []cli.Flag{
 			utils.NoUSBFlag,
+			utils.LegacyRPCEnabledFlag,
+			utils.LegacyRPCListenAddrFlag,
+			utils.LegacyRPCPortFlag,
+			utils.LegacyRPCCORSDomainFlag,
+			utils.LegacyRPCVirtualHostsFlag,
+			utils.LegacyRPCApiFlag,
+			utils.LegacyMinerGasTargetFlag,
 		},
 	},
 	{
@@ -230,6 +233,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.SnapshotFlag,
 			utils.BloomFilterSizeFlag,
 			cli.HelpFlag,
+			utils.CatalystFlag,
 		},
 	},
 }

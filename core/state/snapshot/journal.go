@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/VictoriaMetrics/fastcache"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -66,29 +67,6 @@ type journalStorage struct {
 	Vals [][]byte
 }
 
-func ParseGeneratorStatus(generatorBlob []byte) string {
-	if len(generatorBlob) == 0 {
-		return ""
-	}
-	var generator journalGenerator
-	if err := rlp.DecodeBytes(generatorBlob, &generator); err != nil {
-		log.Warn("failed to decode snapshot generator", "err", err)
-		return ""
-	}
-	// Figure out whether we're after or within an account
-	var m string
-	switch marker := generator.Marker; len(marker) {
-	case common.HashLength:
-		m = fmt.Sprintf("at %#x", marker)
-	case 2 * common.HashLength:
-		m = fmt.Sprintf("in %#x at %#x", marker[:common.HashLength], marker[common.HashLength:])
-	default:
-		m = fmt.Sprintf("%#x", marker)
-	}
-	return fmt.Sprintf(`Done: %v, Accounts: %d, Slots: %d, Storage: %d, Marker: %s`,
-		generator.Done, generator.Accounts, generator.Slots, generator.Storage, m)
-}
-
 // loadAndParseJournal tries to parse the snapshot journal in latest format.
 func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, journalGenerator, error) {
 	// Retrieve the disk layer generator. It must exist, no matter the
@@ -110,7 +88,7 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, jou
 	// etc.), we just discard all diffs and try to recover them later.
 	journal := rawdb.ReadSnapshotJournal(db)
 	if len(journal) == 0 {
-		log.Warn("Loaded snapshot journal", "diskroot", base.root, "diffs", "missing")
+		log.Debug("Loaded snapshot journal", "diskroot", base.root, "diffs", "missing")
 		return base, generator, nil
 	}
 	r := rlp.NewStream(bytes.NewReader(journal), 0)
@@ -136,7 +114,7 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, jou
 	// It can happen that Geth crashes without persisting the latest
 	// diff journal.
 	if !bytes.Equal(root.Bytes(), base.root.Bytes()) {
-		log.Warn("Loaded snapshot journal", "diskroot", base.root, "diffs", "unmatched")
+		log.Debug("Loaded snapshot journal", "diskroot", base.root, "diffs", "unmatched")
 		return base, generator, nil
 	}
 	// Load all the snapshot diffs from the journal
